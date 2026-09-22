@@ -1,7 +1,7 @@
 
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { supabase } from "../../lib/supabase";
@@ -12,9 +12,96 @@ export default function ResetPasswordPage() {
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [loading, setLoading] = useState(false);
+  const [checkingSession, setCheckingSession] = useState(true);
+  const [hasSession, setHasSession] = useState(false);
   const [message, setMessage] = useState("");
 
+  // Handle Supabase password recovery session
+  useEffect(() => {
+    let mounted = true;
+
+    const handleRecoverySession = async () => {
+      try {
+        // Get the recovery code from the URL
+        const code = new URLSearchParams(
+          window.location.search
+        ).get("code");
+
+        // Exchange the recovery code for a Supabase session
+        if (code) {
+          const { error } =
+            await supabase.auth.exchangeCodeForSession(code);
+
+          if (error) {
+            // If the code has already been exchanged,
+            // continue checking for an existing session.
+            const {
+              data: { session: existingSession },
+            } = await supabase.auth.getSession();
+
+            if (!existingSession) {
+              if (mounted) {
+                setMessage(error.message);
+                setHasSession(false);
+                setCheckingSession(false);
+              }
+
+              return;
+            }
+          }
+        }
+
+        // Check the current Supabase session
+        const {
+          data: { session },
+          error: sessionError,
+        } = await supabase.auth.getSession();
+
+        if (!mounted) return;
+
+        if (sessionError) {
+          setMessage(sessionError.message);
+          setHasSession(false);
+        } else if (session) {
+          setHasSession(true);
+          setMessage("");
+        } else {
+          setHasSession(false);
+          setMessage(
+            "Your password reset link is invalid or expired. Please request a new link."
+          );
+        }
+
+        setCheckingSession(false);
+      } catch (error) {
+        if (!mounted) return;
+
+        setHasSession(false);
+        setMessage(
+          error instanceof Error
+            ? error.message
+            : "Unable to verify your recovery session."
+        );
+        setCheckingSession(false);
+      }
+    };
+
+    handleRecoverySession();
+
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  // Update the user's password
   const handleUpdatePassword = async () => {
+    if (!hasSession) {
+      setMessage(
+        "Auth session missing. Please open a fresh password reset link."
+      );
+      return;
+    }
+
     if (!password || !confirmPassword) {
       setMessage("Please fill in both password fields.");
       return;
@@ -56,6 +143,7 @@ export default function ResetPasswordPage() {
     <main className="relative flex min-h-screen items-center justify-center overflow-hidden bg-[#f7f8f7] px-5 py-10 text-[#183b4d] sm:px-6">
       {/* Background Decorations */}
       <div className="pointer-events-none absolute -left-32 -top-32 h-80 w-80 rounded-full bg-[#dcefeb] opacity-70 blur-3xl" />
+
       <div className="pointer-events-none absolute -bottom-32 -right-32 h-80 w-80 rounded-full bg-[#e4f1ee] opacity-80 blur-3xl" />
 
       <div className="relative z-10 w-full max-w-md">
@@ -95,9 +183,21 @@ export default function ResetPasswordPage() {
               strokeLinejoin="round"
               aria-hidden="true"
             >
-              <rect width="18" height="11" x="3" y="11" rx="2" />
+              <rect
+                width="18"
+                height="11"
+                x="3"
+                y="11"
+                rx="2"
+              />
+
               <path d="M7 11V7a5 5 0 0 1 10 0v4" />
-              <circle cx="12" cy="16" r="1" />
+
+              <circle
+                cx="12"
+                cy="16"
+                r="1"
+              />
             </svg>
           </div>
 
@@ -116,6 +216,16 @@ export default function ResetPasswordPage() {
           </div>
 
           <div className="space-y-5">
+            {/* Session Status */}
+            {checkingSession && (
+              <div
+                role="status"
+                className="rounded-xl border border-[#dce5e2] bg-[#f4faf8] p-4 text-center text-sm leading-5 text-[#2b887d]"
+              >
+                Verifying your password reset session...
+              </div>
+            )}
+
             {/* New Password Field */}
             <div>
               <label
@@ -132,7 +242,8 @@ export default function ResetPasswordPage() {
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 autoComplete="new-password"
-                className="w-full rounded-xl border border-[#dce5e2] bg-[#fbfcfc] px-4 py-3 text-sm text-[#183b4d] outline-none transition placeholder:text-[#a2afb4] focus:border-[#2b887d] focus:bg-white focus:ring-4 focus:ring-[#2b887d]/10"
+                disabled={checkingSession || !hasSession || loading}
+                className="w-full rounded-xl border border-[#dce5e2] bg-[#fbfcfc] px-4 py-3 text-sm text-[#183b4d] outline-none transition placeholder:text-[#a2afb4] focus:border-[#2b887d] focus:bg-white focus:ring-4 focus:ring-[#2b887d]/10 disabled:cursor-not-allowed disabled:opacity-60"
               />
 
               <p className="mt-2 text-xs leading-5 text-[#8a999f]">
@@ -156,22 +267,32 @@ export default function ResetPasswordPage() {
                 value={confirmPassword}
                 onChange={(e) => setConfirmPassword(e.target.value)}
                 autoComplete="new-password"
+                disabled={checkingSession || !hasSession || loading}
                 onKeyDown={(e) => {
-                  if (e.key === "Enter" && !loading) {
+                  if (
+                    e.key === "Enter" &&
+                    !loading &&
+                    !checkingSession &&
+                    hasSession
+                  ) {
                     handleUpdatePassword();
                   }
                 }}
-                className="w-full rounded-xl border border-[#dce5e2] bg-[#fbfcfc] px-4 py-3 text-sm text-[#183b4d] outline-none transition placeholder:text-[#a2afb4] focus:border-[#2b887d] focus:bg-white focus:ring-4 focus:ring-[#2b887d]/10"
+                className="w-full rounded-xl border border-[#dce5e2] bg-[#fbfcfc] px-4 py-3 text-sm text-[#183b4d] outline-none transition placeholder:text-[#a2afb4] focus:border-[#2b887d] focus:bg-white focus:ring-4 focus:ring-[#2b887d]/10 disabled:cursor-not-allowed disabled:opacity-60"
               />
             </div>
 
             {/* Update Password Button */}
             <button
               onClick={handleUpdatePassword}
-              disabled={loading}
+              disabled={loading || checkingSession || !hasSession}
               className="w-full rounded-xl bg-[#2b887d] px-4 py-3.5 text-sm font-semibold text-white shadow-sm transition hover:bg-[#216d64] hover:shadow-md disabled:cursor-not-allowed disabled:opacity-60"
             >
-              {loading ? "Updating..." : "Update password"}
+              {checkingSession
+                ? "Verifying session..."
+                : loading
+                  ? "Updating..."
+                  : "Update password"}
             </button>
 
             {/* Status Message */}
